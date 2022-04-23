@@ -160,6 +160,7 @@ static VOID DeleteHookEntry(UINT pos)
 }
 
 //-------------------------------------------------------------------------
+// ???
 static DWORD_PTR FindOldIP(PHOOK_ENTRY pHook, DWORD_PTR ip)
 {
     UINT i;
@@ -183,6 +184,7 @@ static DWORD_PTR FindOldIP(PHOOK_ENTRY pHook, DWORD_PTR ip)
 }
 
 //-------------------------------------------------------------------------
+// ???
 static DWORD_PTR FindNewIP(PHOOK_ENTRY pHook, DWORD_PTR ip)
 {
     UINT i;
@@ -196,11 +198,12 @@ static DWORD_PTR FindNewIP(PHOOK_ENTRY pHook, DWORD_PTR ip)
 }
 
 //-------------------------------------------------------------------------
+// TODO 为线程设置 rip，具体没太搞懂
 static VOID ProcessThreadIPs(HANDLE hThread, UINT pos, UINT action)
 {
     // If the thread suspended in the overwritten area,
     // move IP to the proper address.
-
+    // 原来可以这样拿 rip
     CONTEXT c;
 #if defined(_M_X64) || defined(__x86_64__)
     DWORD64 *pIP = &c.Rip;
@@ -260,6 +263,12 @@ static VOID ProcessThreadIPs(HANDLE hThread, UINT pos, UINT action)
 }
 
 //-------------------------------------------------------------------------
+// 枚举当前进程的线程信息，存入pThreads 中：
+// PFROZEN_THREADS pThreads {
+//     pItems: [th32ThreadID(DWORD)],
+//     capacity: 128,
+//     size: pItems.len(),
+// }
 static BOOL EnumerateThreads(PFROZEN_THREADS pThreads)
 {
     BOOL succeeded = FALSE;
@@ -324,6 +333,7 @@ static BOOL EnumerateThreads(PFROZEN_THREADS pThreads)
 }
 
 //-------------------------------------------------------------------------
+// 停止 thread
 static MH_STATUS Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
 {
     MH_STATUS status = MH_OK;
@@ -343,8 +353,8 @@ static MH_STATUS Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
             HANDLE hThread = OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[i]);
             if (hThread != NULL)
             {
-                SuspendThread(hThread);
-                ProcessThreadIPs(hThread, pos, action);
+                SuspendThread(hThread); // 停止线程
+                ProcessThreadIPs(hThread, pos, action); // TODO 为线程设置 rip，具体没太搞懂 
                 CloseHandle(hThread);
             }
         }
@@ -354,6 +364,7 @@ static MH_STATUS Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
 }
 
 //-------------------------------------------------------------------------
+// 单纯地重启线程，没有其他操作。
 static VOID Unfreeze(PFROZEN_THREADS pThreads)
 {
     if (pThreads->pItems != NULL)
@@ -379,6 +390,7 @@ static MH_STATUS EnableHookLL(UINT pos, BOOL enable)
     PHOOK_ENTRY pHook = &g_hooks.pItems[pos];
     DWORD  oldProtect;
     SIZE_T patchSize    = sizeof(JMP_REL);
+    // target
     LPBYTE pPatchTarget = (LPBYTE)pHook->pTarget;
 
     if (pHook->patchAbove)
@@ -393,7 +405,9 @@ static MH_STATUS EnableHookLL(UINT pos, BOOL enable)
     if (enable)
     {
         PJMP_REL pJmp = (PJMP_REL)pPatchTarget;
+        // 改成 jmp <addr> (0xE9 <addr>)
         pJmp->opcode = 0xE9;
+        // 所以是跳转到 `pHook->pDetour`
         pJmp->operand = (UINT32)((LPBYTE)pHook->pDetour - (pPatchTarget + sizeof(JMP_REL)));
 
         if (pHook->patchAbove)
@@ -560,6 +574,18 @@ MH_STATUS WINAPI MH_Uninitialize(VOID)
 }
 
 //-------------------------------------------------------------------------
+/***
+ * 
+ * 
+ * pTarget: GetProcAddress 获取的某个模块上的函数地址
+ * 
+ * pDetour: 将要覆盖的函数
+ * 
+ * ppOriginal: trampoline 函数，用于调用 original function
+ * 
+ * A pointer to the trampoline function, which will be used to call the original target function.
+ *  
+*/
 MH_STATUS WINAPI MH_CreateHook(LPVOID pTarget, LPVOID pDetour, LPVOID *ppOriginal)
 {
     MH_STATUS status = MH_OK;
@@ -875,11 +901,11 @@ MH_STATUS WINAPI MH_CreateHookApiEx(
     hModule = GetModuleHandleW(pszModule);
     if (hModule == NULL)
         return MH_ERROR_MODULE_NOT_FOUND;
-
+    // 获取模块中函数的地址
     pTarget = (LPVOID)GetProcAddress(hModule, pszProcName);
     if (pTarget == NULL)
         return MH_ERROR_FUNCTION_NOT_FOUND;
-
+    // 看来 ppTarget 没什么传的必要
     if(ppTarget != NULL)
         *ppTarget = pTarget;
 
